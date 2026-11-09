@@ -1,0 +1,11 @@
+# 빌드 부산물 제외
+build/
+dist/
+*.spec
+__pycache__/
+
+# 현장 실행 데이터 및 캡처 이미지 제외
+data/
+captures_s_structure/
+counts_s_structure.json
+config_s_structure.json
