@@ -72,7 +72,6 @@ def get_base_dir():
 
 BASE_DIR = get_base_dir()
 DATA_DIR = os.path.join(BASE_DIR, "data")
-# [주의점 1] 1개의 단일 엑셀 파일로 전체 이력 및 중복 관리
 SINGLE_EXCEL_PATH = os.path.join(DATA_DIR, "S_Structure_Inspection_History.xlsx")
 COUNT_FILE = os.path.join(BASE_DIR, "counts_s_structure.json")
 CFG_FILE = os.path.join(BASE_DIR, "config_s_structure.json")
@@ -104,7 +103,7 @@ def sanitize_filename(name):
 DEFAULT_APP_CFG = {
     "foot_switch_keys": ["space", "F2", "F4", "KP_Add"],
     "allow_empty_enter_as_footswitch": True,
-    "save_mode": "merged_single",  # "merged_single" (1차+2차 병합 1개 파일), "separate" (개별 2개 파일), "both" (모두 저장)
+    "save_mode": "merged_single",  # "merged_single", "separate", "both"
 }
 
 def load_app_cfg():
@@ -157,9 +156,6 @@ LANG_PACK = {
         "search_btn": "🔍 검색",
         "save_btn": "💾 Save (엑셀 추출)",
         "dup_scan_tag": "[중복 스캔]",
-        "step_1": "① 바코드 스캔 대기",
-        "step_2": "② 1차 촬영 대기 (풋스위치)",
-        "step_3": "③ 뒤집어 2차 촬영 대기 (풋스위치)",
         "sorting_title": "⚠️ Sorting 필요 제품 경고",
         "sorting_msg": "[알림: Sorting 필요 제품]\n\nBarcode: {code}\n\n해당 제품은 Sorting 대상 리스트에 등록되어 있습니다.\n제품을 별도로 격리한 뒤 [Enter] 키를 누르세요.",
         "ng_model_title": "⚠️ NG - 코드 불일치",
@@ -167,7 +163,7 @@ LANG_PACK = {
         "ng_dup_title": "🚫 QR NG - 중복 바코드 감지",
         "ng_dup_msg": "[QR NG 발생: 이미 검사 완료된 바코드입니다]\n\n스캔 바코드: {code}\n중복 스캔 이력이 엑셀에 NG로 기록되었습니다.\n\n관리자 비밀번호 6자리를 입력하여 해제하세요.",
         "ng_incomplete_title": "⚠️ NG - 이전 제품 촬영 미완료",
-        "ng_incomplete_msg": "[NG: 촬영이 완료되지 않은 상태에서 새 바코드가 스캔되었습니다]\n\n현재 진행 바코드: {curr_code}\n현재 단계: {step_desc}\n\n1차 및 2차 촬영을 먼저 완료하거나 [촬영 취소]를 진행하세요.\n관리자 비밀번호 6자리를 입력하여 해제하세요.",
+        "ng_incomplete_msg": "[NG: 촬영이 완료되지 않은 상태에서 새 바코드가 스캔되었습니다]\n\n현재 진행 바코드: {curr_code}\n현재 단계: {step_desc}\n\n1차 및 2차 촬영을 먼저 완료하거나 [✕ 취소] 버튼을 누르세요.\n관리자 비밀번호 6자리를 입력하여 해제하세요.",
         "ng_mgr_err_title": "⚠️ NG - 관리자 모드 오류",
         "ng_mgr_err_msg": "[NG: 신규 바코드는 일반 모드에서 스캔해야 합니다]\n\n스캔 바코드: {code}\n재검사 모드에서는 이미 등록된 바코드만 재스캔 가능합니다.\n\n관리자 비밀번호 6자리를 입력하여 해제하세요.",
         "unlock_btn": "확인 및 잠금 해제",
@@ -204,9 +200,6 @@ LANG_PACK = {
         "search_btn": "🔍 Search",
         "save_btn": "💾 Save (Excel)",
         "dup_scan_tag": "[Duplicate Scan]",
-        "step_1": "① Waiting for Barcode Scan",
-        "step_2": "② Waiting 1st Shot (Foot Switch)",
-        "step_3": "③ Flip & 2nd Shot (Foot Switch)",
         "sorting_title": "⚠️ Sorting Required Warning",
         "sorting_msg": "[Notice: Sorting Item]\n\nBarcode: {code}\n\nThis item is on the Sorting target list.\nIsolate the product and press [Enter].",
         "ng_model_title": "⚠️ NG - Code Mismatch",
@@ -251,9 +244,6 @@ LANG_PACK = {
         "search_btn": "🔍 Szukaj",
         "save_btn": "💾 Zapisz (Excel)",
         "dup_scan_tag": "[Duplikat skanu]",
-        "step_1": "① Oczekiwanie na skan kodu",
-        "step_2": "② Zdjęcie 1 (Przełącznik nożny)",
-        "step_3": "③ Odwróć i Zdjęcie 2 (Przełącznik nożny)",
         "sorting_title": "⚠️ Ostrzeżenie - Wymagane sortowanie",
         "sorting_msg": "[Uwaga: Przedmiot do sortowania]\n\nBarcode: {code}\n\nOdizoluj produkt i naciśnij [Enter].",
         "ng_model_title": "⚠️ NG - Niezgodność kodu",
@@ -279,11 +269,9 @@ TEXT_COLOR = "#e1e4ea"
 TEXT_MUTED = "#8b949e"
 ACCENT_YELLOW = "#f59f00"
 ACCENT_BLUE = "#38bdf8"
-ACCENT_GREEN = "#22c55e"
 
 
 class SStructureInspectorApp:
-    # 검사 상태 상수
     STATE_WAIT_SCAN = 0   # 1단계: 바코드 스캔 대기
     STATE_WAIT_SHOT1 = 1  # 2단계: 1차 촬영 대기 (풋스위치)
     STATE_WAIT_SHOT2 = 2  # 3단계: 제품 뒤집기 후 2차 촬영 대기 (풋스위치)
@@ -302,7 +290,6 @@ class SStructureInspectorApp:
         self.is_manager_mode = False
         self.is_rework_mode = False
 
-        # 현재 작업 상태 변수
         self.inspection_state = self.STATE_WAIT_SCAN
         self.active_barcode = ""
         self.shot1_frame = None
@@ -311,12 +298,10 @@ class SStructureInspectorApp:
         self.shot2_time_str = ""
         self.last_footswitch_time = 0.0
 
-        # 이미지 레퍼런스 유지 (GC 방지)
         self.cam_photo = None
         self.shot1_photo = None
         self.shot2_photo = None
 
-        # 웹캠 관련 변수
         self.cap = None
         self.current_webcam_frame = None
         self.is_camera_ready = False
@@ -325,18 +310,15 @@ class SStructureInspectorApp:
         self.cam_ng_popup_active = False
         self.cam_ng_dialog = None
 
-        # 팝업 및 알람 상태
         self.active_popup = None
         self.alarm_thread_running = False
         self.is_learning_footswitch = False
 
-        # 스캔 버퍼 및 타이머
         self.last_scanned_code = ""
         self.last_scanned_time = 0.0
         self.auto_submit_timer = None
         self.global_scan_buffer = []
 
-        # 데이터 및 이력 세트
         self.counts = self.load_counts()
         self.scanned_history = set()
         self.sorting_list = set()
@@ -360,6 +342,45 @@ class SStructureInspectorApp:
         if kwargs:
             return text.format(**kwargs)
         return text
+
+    # ==========================================
+    # 팝업 중앙 배치 및 포커스 헬퍼 (누락 수정 완료)
+    # ==========================================
+    def center_popup(self, dialog, width, height):
+        self.root.update_idletasks()
+        rx = self.root.winfo_x()
+        ry = self.root.winfo_y()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+
+        x = rx + (rw - width) // 2
+        y = ry + (rh - height) // 2
+        dialog.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
+
+    def clear_scan_buffers(self):
+        if self.auto_submit_timer:
+            try:
+                self.root.after_cancel(self.auto_submit_timer)
+            except Exception:
+                pass
+            self.auto_submit_timer = None
+        self.global_scan_buffer.clear()
+        if hasattr(self, "scan_entry"):
+            self.scan_entry.delete(0, tk.END)
+
+    def close_active_popup(self, dialog=None):
+        target = dialog or self.active_popup
+        if target:
+            try:
+                target.grab_release()
+            except Exception:
+                pass
+            try:
+                target.destroy()
+            except Exception:
+                pass
+        self.active_popup = None
+        self.clear_scan_buffers()
 
     # ==========================================
     # 사운드 알람 제어
@@ -506,7 +527,6 @@ class SStructureInspectorApp:
         self.root.after(33, self.update_camera_canvas)
 
     def render_captured_thumbnail(self, canvas_widget, frame_bgr, slot_num, timestamp_text=""):
-        """[주의점 2] 풋스위치 촬영 시 좌측 하단 슬롯에 촬영된 사진 즉시 표시"""
         canvas_widget.delete("all")
         target_w, target_h = 198, 145
 
@@ -527,7 +547,6 @@ class SStructureInspectorApp:
         sy = max(0, (scaled_h - target_h) // 2)
         crop = resized[sy:sy + target_h, sx:sx + target_w].copy()
 
-        # 상단 배너 오버레이
         cv2.rectangle(crop, (0, 0), (target_w, 24), (20, 83, 45), -1)
         label_str = f"SHOT {slot_num} OK ({timestamp_text})"
         cv2.putText(crop, label_str, (6, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
@@ -543,7 +562,6 @@ class SStructureInspectorApp:
         canvas_widget.create_image(0, 0, anchor="nw", image=tk_img)
 
     def open_photo_zoom_popup(self, slot_num):
-        """좌측 하단 촬영 사진 더블클릭 시 원본 확대 보기"""
         frame = self.shot1_frame if slot_num == 1 else self.shot2_frame
         if frame is None or not CV_AVAILABLE:
             return
@@ -564,7 +582,7 @@ class SStructureInspectorApp:
         lbl.pack(expand=True, pady=10)
 
     # ==========================================
-    # [주의점 3] 일자별 폴더 사진 저장 (병합 1파일 / 개별 파일 지원)
+    # 일자별 폴더 사진 저장
     # ==========================================
     def save_inspection_photos(self, barcode_str, frame1, frame2, t1_str, t2_str):
         if not CV_AVAILABLE or frame1 is None or frame2 is None:
@@ -581,7 +599,6 @@ class SStructureInspectorApp:
         if not safe_code:
             safe_code = f"MPL03079AB_{now.strftime('%H%M%S')}"
 
-        # 재검사/RE-WORK 등으로 동일 일자에 같은 바코드 사진이 이미 있을 경우 타임스탬프 부여
         merged_filename = f"{safe_code}.jpg"
         merged_path = os.path.join(base_day_dir, merged_filename)
         if os.path.exists(merged_path):
@@ -604,7 +621,6 @@ class SStructureInspectorApp:
 
         def _save_worker(f1, f2):
             try:
-                # 1차, 2차 이미지 상단에 바코드 및 촬영 시각 워터마크 표기 후 좌우 병합
                 h1, w1 = f1.shape[:2]
                 h2, w2 = f2.shape[:2]
                 if (h1, w1) != (h2, w2):
@@ -780,7 +796,6 @@ class SStructureInspectorApp:
         )
         self.btn_footswitch_cfg.pack(side=tk.RIGHT, padx=(0, 10))
 
-        # 히든 삭제 버튼 (비밀번호 설정 좌측 빈 공간)
         self.btn_hidden_delete = tk.Button(
             header_frame, text="", command=self.trigger_hidden_delete_action,
             bg=BG_MAIN, activebackground=BG_MAIN, bd=0, relief="flat", cursor="arrow", width=3
@@ -803,12 +818,10 @@ class SStructureInspectorApp:
         main_frame = tk.Frame(self.tab_scan, bg=BG_MAIN)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=8)
 
-        # 좌측 패널 (바코드 입력 + 실시간 웹캠 + 좌측 하단 1차/2차 촬영 이미지 슬롯)
         left_panel = tk.Frame(main_frame, bg=BG_PANEL, width=450)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
         left_panel.pack_propagate(False)
 
-        # 상단 모델 & 진행 단계 표시줄
         top_header = tk.Frame(left_panel, bg=BG_PANEL)
         top_header.pack(fill=tk.X, padx=18, pady=(8, 4))
 
@@ -819,7 +832,6 @@ class SStructureInspectorApp:
         )
         self.lbl_model_info.pack(fill=tk.X)
 
-        # 3단계 워크플로우 배지
         step_frame = tk.Frame(left_panel, bg="#181c24", pady=4, padx=4)
         step_frame.pack(fill=tk.X, padx=18, pady=(2, 4))
         step_frame.columnconfigure((0, 1, 2), weight=1)
@@ -833,7 +845,6 @@ class SStructureInspectorApp:
         self.lbl_step3 = tk.Label(step_frame, text="③ 뒤집어 2차 촬영", font=("맑은 고딕", 8, "bold"), bg="#222731", fg=TEXT_MUTED, pady=3)
         self.lbl_step3.grid(row=0, column=2, padx=2, sticky="ew")
 
-        # 메인 상태창
         self.status_box = tk.Label(
             left_panel, text="READY", font=("Arial", 28, "bold"),
             fg="#adb5bd", bg="#2a2e37", height=2, relief="flat"
@@ -852,7 +863,6 @@ class SStructureInspectorApp:
         )
         self.lbl_input_guide.pack(fill=tk.X, padx=18)
 
-        # 바코드 입력창 및 수동 촬영/취소 보조 버튼
         entry_row = tk.Frame(left_panel, bg=BG_PANEL)
         entry_row.pack(fill=tk.X, padx=18, pady=(3, 6))
 
@@ -879,7 +889,6 @@ class SStructureInspectorApp:
         )
         self.btn_cancel_cycle.pack(side=tk.LEFT, padx=(2, 0))
 
-        # 통계 카드 (TOTAL / OK / NG)
         stats_frame = tk.Frame(left_panel, bg=BG_PANEL)
         stats_frame.pack(fill=tk.X, padx=18, pady=2)
         stats_frame.columnconfigure((0, 1, 2), weight=1)
@@ -902,7 +911,6 @@ class SStructureInspectorApp:
         self.lbl_ng_val.pack()
         tk.Label(card_ng, text="NG", font=("Arial", 7, "bold"), fg=TEXT_MUTED, bg="#1a1e26").pack()
 
-        # RESET & MANAGER 버튼
         btn_row = tk.Frame(left_panel, bg=BG_PANEL)
         btn_row.pack(fill=tk.X, padx=18, pady=(4, 4))
         self.btn_reset = tk.Button(
@@ -919,7 +927,6 @@ class SStructureInspectorApp:
         )
         self.btn_manager.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
 
-        # 1) 실시간 웹캠 뷰어 (중단)
         cam_panel = tk.Frame(left_panel, bg=BG_PANEL)
         cam_panel.pack(fill=tk.X, padx=18, pady=(2, 4))
 
@@ -932,7 +939,6 @@ class SStructureInspectorApp:
         self.cam_canvas = tk.Canvas(cam_panel, width=410, height=155, bg="#0f172a", highlightthickness=1, highlightbackground="#334155")
         self.cam_canvas.pack(fill=tk.X, pady=(2, 0))
 
-        # 2) [주의점 2] 좌측 하단 촬영 사진 프리뷰 (1차 촬영 / 2차 촬영 나란히 표시)
         captured_panel = tk.Frame(left_panel, bg=BG_PANEL)
         captured_panel.pack(fill=tk.BOTH, expand=True, padx=18, pady=(4, 8))
 
@@ -947,7 +953,6 @@ class SStructureInspectorApp:
         slots_frame.pack(fill=tk.BOTH, expand=True)
         slots_frame.columnconfigure((0, 1), weight=1)
 
-        # 좌측 하단 슬롯 1: 1차 촬영 사진
         s1_box = tk.Frame(slots_frame, bg=BG_PANEL)
         s1_box.grid(row=0, column=0, padx=(0, 4), sticky="nsew")
         tk.Label(s1_box, text="[1차 촬영 - 전면]", font=("맑은 고딕", 8, "bold"), fg="#93c5fd", bg=BG_PANEL).pack(anchor="w")
@@ -955,7 +960,6 @@ class SStructureInspectorApp:
         self.canvas_shot1.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
         self.canvas_shot1.bind("<Double-Button-1>", lambda e: self.open_photo_zoom_popup(1))
 
-        # 좌측 하단 슬롯 2: 2차 촬영 사진 (뒤집기 후)
         s2_box = tk.Frame(slots_frame, bg=BG_PANEL)
         s2_box.grid(row=0, column=1, padx=(4, 0), sticky="nsew")
         tk.Label(s2_box, text="[2차 촬영 - 후면(뒤집기)]", font=("맑은 고딕", 8, "bold"), fg="#fde047", bg=BG_PANEL).pack(anchor="w")
@@ -966,7 +970,6 @@ class SStructureInspectorApp:
         self.render_captured_thumbnail(self.canvas_shot1, None, 1)
         self.render_captured_thumbnail(self.canvas_shot2, None, 2)
 
-        # 우측 패널: 실시간 검사 기록 테이블
         right_panel = tk.Frame(main_frame, bg=BG_MAIN)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -1099,7 +1102,6 @@ class SStructureInspectorApp:
         self.status_box.config(text=text, fg=fg_color, bg=bg_color, font=("맑은 고딕", font_size, "bold"))
 
     def cancel_current_inspection(self):
-        """현재 촬영 대기 중인 바코드를 취소하고 초기 스캔 대기 상태로 복귀"""
         if self.inspection_state == self.STATE_WAIT_SCAN:
             return
         self.inspection_state = self.STATE_WAIT_SCAN
@@ -1119,13 +1121,16 @@ class SStructureInspectorApp:
     def open_footswitch_learn_dialog(self):
         if self.active_popup:
             return
+        self.clear_scan_buffers()
         self.is_learning_footswitch = True
+
         win = tk.Toplevel(self.root)
         win.title("USB 풋스위치 키 설정")
         win.configure(bg=BG_PANEL)
         win.transient(self.root)
         win.grab_set()
-        self.center_popup(win, 420, 230)
+        self.active_popup = win
+        self.center_popup(win, 440, 240)
 
         tk.Label(win, text="[ 🦶 USB 풋스위치 입력 키 감지 ]", font=("맑은 고딕", 12, "bold"), fg=ACCENT_BLUE, bg=BG_PANEL).pack(pady=(18, 8))
         tk.Label(
@@ -1140,36 +1145,42 @@ class SStructureInspectorApp:
         )
         lbl_cur.pack(pady=8)
 
+        def close_learn():
+            self.is_learning_footswitch = False
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
+
         def on_key_captured(event):
             key_name = event.keysym
             if key_name in ("Escape",):
-                self.is_learning_footswitch = False
-                win.destroy()
+                close_learn()
                 return
-            # 기본 F2와 방금 밟은 키를 함께 등록
             new_keys = [key_name]
             if "F2" not in new_keys:
                 new_keys.append("F2")
             self.app_cfg["foot_switch_keys"] = new_keys
             save_app_cfg(self.app_cfg)
             self.btn_footswitch_cfg.config(text=f"🦶 풋스위치 키 설정 ({'/'.join(new_keys[:2])})")
-            self.is_learning_footswitch = False
-            win.destroy()
+            close_learn()
             messagebox.showinfo("설정 완료", f"풋스위치 작동 키가 [{key_name}] 키로 설정되었습니다.", parent=self.root)
             self.scan_entry.focus_set()
 
         win.bind("<KeyPress>", on_key_captured)
-        win.protocol("WM_DELETE_WINDOW", lambda: (setattr(self, "is_learning_footswitch", False), win.destroy()))
+        win.protocol("WM_DELETE_WINDOW", close_learn)
+        win.focus_force()
 
     def on_scan_entry_return(self, event):
+        if self.active_popup or self.is_learning_footswitch:
+            return
         text = self.scan_entry.get().strip()
         if text:
             self.process_scan(text.upper())
         elif self.app_cfg.get("allow_empty_enter_as_footswitch", True) and self.inspection_state in (self.STATE_WAIT_SHOT1, self.STATE_WAIT_SHOT2):
-            # 바코드 입력 없이 Enter 신호만 들어온 경우(일부 USB 풋스위치 기본값) 촬영 트리거로 동작
             self.trigger_footswitch_capture()
 
     def on_entry_key_release(self, event):
+        if self.active_popup or self.is_learning_footswitch:
+            return
         if event.keysym in self.app_cfg.get("foot_switch_keys", []):
             return
         if event.keysym in ("Return", "KP_Enter"):
@@ -1185,6 +1196,8 @@ class SStructureInspectorApp:
             self.auto_submit_timer = self.root.after(150, self._trigger_auto_submit_entry)
 
     def _trigger_auto_submit_entry(self):
+        if self.active_popup or self.is_learning_footswitch:
+            return
         text = self.scan_entry.get().strip()
         if text:
             self.process_scan(text.upper())
@@ -1194,9 +1207,7 @@ class SStructureInspectorApp:
             if self.is_learning_footswitch or self.active_popup:
                 return
 
-            # 1) USB 풋스위치 지정 키 감지 (Space, F2 등)
             if event.keysym in self.app_cfg.get("foot_switch_keys", []):
-                # 스캔 입력창에 공백 등이 찍히지 않도록 제거
                 if event.keysym == "space":
                     cur_txt = self.scan_entry.get().replace(" ", "")
                     self.scan_entry.delete(0, tk.END)
@@ -1232,6 +1243,9 @@ class SStructureInspectorApp:
         self.root.bind_all("<KeyPress>", _on_key_press)
 
     def _trigger_auto_submit_global(self):
+        if self.active_popup or self.is_learning_footswitch:
+            self.global_scan_buffer.clear()
+            return
         if self.global_scan_buffer:
             scanned_text = "".join(self.global_scan_buffer).strip()
             self.global_scan_buffer.clear()
@@ -1243,13 +1257,8 @@ class SStructureInspectorApp:
     # 핵심 동작 1: 바코드 스캔 처리
     # ==========================================
     def process_scan(self, raw_code):
-        if self.auto_submit_timer:
-            self.root.after_cancel(self.auto_submit_timer)
-            self.auto_submit_timer = None
-
+        self.clear_scan_buffers()
         raw_code = raw_code.strip().upper()
-        self.scan_entry.delete(0, tk.END)
-        self.global_scan_buffer.clear()
 
         if not raw_code:
             return
@@ -1258,14 +1267,12 @@ class SStructureInspectorApp:
             self.play_triple_beep()
             return
 
-        # 2초 이내 동일 바코드 연속 중복 리딩 무시 (스캐너 더블 트리거 방지)
         now_ts = time.time()
         if raw_code == self.last_scanned_code and (now_ts - self.last_scanned_time) < 2.0:
             return
         self.last_scanned_code = raw_code
         self.last_scanned_time = now_ts
 
-        # 이전 제품의 1차/2차 촬영이 끝나지 않았는데 새 바코드를 스캔한 경우 경고
         if self.inspection_state != self.STATE_WAIT_SCAN:
             step_desc = "1차 촬영 대기 중" if self.inspection_state == self.STATE_WAIT_SHOT1 else "2차 촬영(뒤집기) 대기 중"
             self.set_status("STEP NG", "#dc3545", "#3a1c1f")
@@ -1276,7 +1283,6 @@ class SStructureInspectorApp:
             )
             return
 
-        # [주의점 4] 제품 바코드 'MPL03079AB' 검증
         scanned_prefix = raw_code[:10].upper()
         self.lbl_last_scan.config(text=f"{self.t('last_scan')}: {raw_code}")
 
@@ -1289,13 +1295,11 @@ class SStructureInspectorApp:
             )
             return
 
-        # Sorting 리스트 체크
         if raw_code in self.sorting_list:
             self.set_status("SORTING", "#f59f00", "#3d2716")
             self.open_sorting_popup(raw_code)
             return
 
-        # [주의점 1] 중복 바코드 검사
         is_already_scanned = (raw_code in self.scanned_history)
 
         if self.is_manager_mode:
@@ -1321,7 +1325,6 @@ class SStructureInspectorApp:
                 self.set_status("DUP NG", "#fd7e14", "#3d2716")
                 dup_text = self.t("dup_scan_tag")
 
-                # 기존 행 NG 마킹 및 신규 중복 NG 이력 단일 엑셀에 기록
                 self.handle_duplicate_in_excel_and_tree(raw_code, day_str, time_str, dup_text)
 
                 self.open_lock_popup(
@@ -1331,7 +1334,6 @@ class SStructureInspectorApp:
                 )
                 return
 
-        # 정상 바코드 스캔 완료 -> 2단계 (1차 촬영 대기) 진입
         self.active_barcode = raw_code
         self.shot1_frame = None
         self.shot2_frame = None
@@ -1372,11 +1374,9 @@ class SStructureInspectorApp:
         time_str = now_dt.strftime("%H:%M:%S")
         day_str = now_dt.strftime("%Y-%m-%d")
 
-        # [2단계] 1차 촬영 (전면)
         if self.inspection_state == self.STATE_WAIT_SHOT1:
             self.shot1_frame = captured
             self.shot1_time_str = time_str
-            # 좌측 하단 1차 슬롯에 즉시 표시
             self.render_captured_thumbnail(self.canvas_shot1, self.shot1_frame, 1, time_str)
 
             self.inspection_state = self.STATE_WAIT_SHOT2
@@ -1384,14 +1384,11 @@ class SStructureInspectorApp:
             self.set_status("뒤집어 2차 촬영", "#fde047", "#422006")
             self.play_ok_beep(1100, 130)
 
-        # [3단계] 제품 뒤집기 후 2차 촬영 (후면) -> 검사 완료!
         elif self.inspection_state == self.STATE_WAIT_SHOT2:
             self.shot2_frame = captured
             self.shot2_time_str = time_str
-            # 좌측 하단 2차 슬롯에 즉시 표시
             self.render_captured_thumbnail(self.canvas_shot2, self.shot2_frame, 2, time_str)
 
-            # 일자별 폴더에 사진 저장
             saved_photo_name = self.save_inspection_photos(
                 self.active_barcode, self.shot1_frame, self.shot2_frame,
                 self.shot1_time_str, self.shot2_time_str
@@ -1403,7 +1400,6 @@ class SStructureInspectorApp:
             elif self.is_manager_mode:
                 content_tag = "[DMC 재스캔]"
 
-            # 카운터 및 이력 반영
             self.counts["ok"] += 1
             self.counts["total"] += 1
             self.save_counts()
@@ -1419,20 +1415,17 @@ class SStructureInspectorApp:
             )
             self.tree.insert("", 0, values=row_tuple)
 
-            # 단일 엑셀 파일에 기록
             self.append_record_to_single_excel(
                 seq_no, day_str, time_str, self.active_barcode,
                 f"{day_str} {self.shot1_time_str}", f"{day_str} {self.shot2_time_str}",
                 "OK", saved_photo_name, content_tag
             )
 
-            # 매니저/RE-WORK 1회성 모드 자동 복귀
             if self.is_manager_mode or self.is_rework_mode:
                 self.is_manager_mode = False
                 self.is_rework_mode = False
                 self.btn_manager.config(bg="#2c323d", fg="#adb5bd", text=self.t("manager_btn"))
 
-            # 상태 초기화 (좌측 하단 사진 2장은 다음 바코드 스캔 전까지 작업자가 볼 수 있도록 유지)
             self.inspection_state = self.STATE_WAIT_SCAN
             self.active_barcode = ""
             self.update_step_indicator()
@@ -1441,7 +1434,7 @@ class SStructureInspectorApp:
             self.scan_entry.focus_set()
 
     # ==========================================
-    # [주의점 1] 단일 엑셀 파일 관리 (생성 / 로드 / 기록 / 중복 마킹)
+    # 단일 엑셀 파일 관리
     # ==========================================
     def open_or_init_single_workbook(self):
         unhide_file(SINGLE_EXCEL_PATH)
@@ -1586,7 +1579,6 @@ class SStructureInspectorApp:
         self.total_excel_seq += 1
         seq_no = self.total_excel_seq
 
-        # Treeview에 NG 행 추가 및 기존 동일 바코드 행 NG 표시
         self.tree.insert("", 0, values=(seq_no, day_str, time_str, raw_code, "-", "-", "NG", "-", dup_text), tags=("ng_row",))
         for item_id in self.tree.get_children():
             vals = list(self.tree.item(item_id, "values"))
@@ -1605,7 +1597,6 @@ class SStructureInspectorApp:
                     top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
                 )
 
-                # 기존 행 NG 마킹
                 for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
                     dmc_cell = row[3]
                     res_cell = row[6]
@@ -1617,7 +1608,6 @@ class SStructureInspectorApp:
                             c.fill = ng_fill
                             c.font = ng_font
 
-                # 신규 중복 스캔 NG 행 추가
                 ws.append([seq_no, day_str, time_str, raw_code, "-", "-", "NG", "-", dup_text])
                 h_idx = ws.max_row
                 for col in range(1, 10):
@@ -1742,51 +1732,67 @@ class SStructureInspectorApp:
     def toggle_manager_mode(self):
         if self.active_popup:
             return
+        self.clear_scan_buffers()
 
         win = tk.Toplevel(self.root)
         win.title("MANAGER AUTH")
+        win.resizable(False, False)
         win.configure(bg=BG_PANEL)
         win.transient(self.root)
         win.grab_set()
-        self.center_popup(win, 360, 200)
+        self.active_popup = win
+        self.center_popup(win, 360, 210)
 
         tk.Label(win, text="MANAGER MODE\n관리자 비밀번호 6자리를 입력하세요.",
                  font=("맑은 고딕", 10, "bold"), fg=TEXT_COLOR, bg=BG_PANEL).pack(pady=(15, 8))
 
-        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff")
+        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         pw_entry.pack(pady=5)
-        pw_entry.focus_set()
 
         lbl_err = tk.Label(win, text="", font=("맑은 고딕", 9), fg="#ff6b6b", bg=BG_PANEL)
         lbl_err.pack()
 
+        def close_mgr_auth():
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
+
         def verify(event=None):
             if pw_entry.get() == self.admin_password:
-                win.destroy()
+                self.close_active_popup(win)
                 self.open_manager_actions_dialog()
             else:
                 lbl_err.config(text=self.t("pw_err"))
                 pw_entry.delete(0, tk.END)
+                pw_entry.focus_force()
 
         pw_entry.bind("<Return>", verify)
+        win.protocol("WM_DELETE_WINDOW", close_mgr_auth)
         tk.Button(win, text="로그인", command=verify, bg="#28a745", fg="#ffffff",
-                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=3).pack(pady=10)
+                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=4, cursor="hand2").pack(pady=10)
+        pw_entry.focus_force()
 
     def open_manager_actions_dialog(self):
+        self.clear_scan_buffers()
         dialog = tk.Toplevel(self.root)
         dialog.title("MANAGER CONTROL PANEL")
+        dialog.resizable(False, False)
         dialog.configure(bg=BG_PANEL)
         dialog.transient(self.root)
         dialog.grab_set()
-        self.center_popup(dialog, 480, 310)
+        self.active_popup = dialog
+        self.center_popup(dialog, 480, 320)
 
         tk.Label(dialog, text="[ 관리자 작업 선택 ]", font=("맑은 고딕", 12, "bold"), fg="#38bdf8", bg=BG_PANEL).pack(pady=(15, 10))
+
+        def close_panel():
+            self.close_active_popup(dialog)
+            self.scan_entry.focus_set()
 
         def act_rescan_dmc():
             self.is_manager_mode = True
             self.is_rework_mode = False
             self.btn_manager.config(bg="#f59f00", fg="#000000", text=self.t("manager_btn_on"))
-            dialog.destroy()
+            close_panel()
             messagebox.showinfo("안내", "중복 바코드 재검사 모드가 활성화되었습니다.\n1회 검사(1차·2차 촬영) 완료 시 자동으로 일반 모드로 전환됩니다.", parent=self.root)
             self.scan_entry.focus_set()
 
@@ -1797,14 +1803,13 @@ class SStructureInspectorApp:
             self.is_rework_mode = True
             self.is_manager_mode = False
             self.btn_manager.config(bg="#d97706", fg="#ffffff", text=self.t("manager_btn_rework"))
-            dialog.destroy()
+            close_panel()
             messagebox.showinfo("RE-WORK 모드 활성화", "🛠 RE-WORK 모드가 활성화되었습니다.\n중복 여부와 무관하게 재촬영 및 기록이 가능합니다.", parent=self.root)
             self.scan_entry.focus_set()
 
         tk.Button(dialog, text="🛠 RE-WORK 모드 활성화 (반송품 재검사)", command=act_activate_rework,
                   bg="#78350f", fg="#fde68a", font=("맑은 고딕", 10, "bold"), relief="flat", pady=7, cursor="hand2").pack(fill=tk.X, padx=30, pady=5)
 
-        # 사진 파일 저장 방식 토글
         mode_names = {
             "merged_single": "현재: 1차+2차 좌우 병합 1개 파일 (바코드.jpg)",
             "separate": "현재: 1차/2차 개별 파일 (바코드_1차.jpg, 2차.jpg)",
@@ -1823,6 +1828,10 @@ class SStructureInspectorApp:
                              bg="#065f46", fg="#a7f3d0", font=("맑은 고딕", 9, "bold"), relief="flat", pady=7, cursor="hand2")
         btn_mode.pack(fill=tk.X, padx=30, pady=5)
 
+        tk.Button(dialog, text="닫기", command=close_panel, bg="#374151", fg="#ffffff",
+                  font=("맑은 고딕", 9, "bold"), relief="flat", padx=20, pady=4, cursor="hand2").pack(pady=(10, 5))
+        dialog.protocol("WM_DELETE_WINDOW", close_panel)
+
     def trigger_hidden_delete_action(self):
         if self.active_popup:
             return
@@ -1832,34 +1841,43 @@ class SStructureInspectorApp:
             self.scan_entry.focus_set()
             return
 
+        self.clear_scan_buffers()
         win = tk.Toplevel(self.root)
         win.title("MANAGER AUTH [DELETE]")
+        win.resizable(False, False)
         win.configure(bg=BG_PANEL)
         win.transient(self.root)
         win.grab_set()
-        self.center_popup(win, 360, 200)
+        self.active_popup = win
+        self.center_popup(win, 360, 210)
 
         tk.Label(win, text="선택 기록 삭제\n관리자 비밀번호 6자리를 입력하세요.",
                  font=("맑은 고딕", 10, "bold"), fg=TEXT_COLOR, bg=BG_PANEL).pack(pady=(15, 8))
 
-        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff")
+        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         pw_entry.pack(pady=5)
-        pw_entry.focus_set()
 
         lbl_err = tk.Label(win, text="", font=("맑은 고딕", 9), fg="#ff6b6b", bg=BG_PANEL)
         lbl_err.pack()
 
+        def close_del():
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
+
         def verify_and_delete(event=None):
             if pw_entry.get() == self.admin_password:
-                win.destroy()
+                self.close_active_popup(win)
                 self.delete_selected_rows(selected_items)
             else:
                 lbl_err.config(text=self.t("pw_err"))
                 pw_entry.delete(0, tk.END)
+                pw_entry.focus_force()
 
         pw_entry.bind("<Return>", verify_and_delete)
+        win.protocol("WM_DELETE_WINDOW", close_del)
         tk.Button(win, text="삭제 실행", command=verify_and_delete, bg="#dc3545", fg="#ffffff",
-                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=3).pack(pady=10)
+                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=4, cursor="hand2").pack(pady=10)
+        pw_entry.focus_force()
 
     def delete_selected_rows(self, selected_items):
         if not os.path.exists(SINGLE_EXCEL_PATH):
@@ -1912,6 +1930,10 @@ class SStructureInspectorApp:
         self.scan_entry.focus_set()
 
     def open_sorting_popup(self, dmc_code):
+        if self.active_popup:
+            self.close_active_popup()
+        self.clear_scan_buffers()
+
         dialog = tk.Toplevel(self.root)
         dialog.title(self.t("sorting_title"))
         dialog.resizable(False, False)
@@ -1920,17 +1942,15 @@ class SStructureInspectorApp:
         dialog.grab_set()
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        self.center_popup(dialog, 520, 290)
         self.active_popup = dialog
+        self.center_popup(dialog, 520, 290)
         self.play_triple_beep()
 
         msg = self.t("sorting_msg", code=dmc_code)
         tk.Label(dialog, text=msg, font=("맑은 고딕", 11, "bold"), bg="#3a1c1f", fg="#ff6b6b", justify=tk.LEFT).pack(pady=25, padx=20)
 
         def close_dialog(event=None):
-            dialog.grab_release()
-            dialog.destroy()
-            self.active_popup = None
+            self.close_active_popup(dialog)
             self.set_status("READY", "#adb5bd", "#2a2e37")
             self.scan_entry.focus_set()
 
@@ -1938,9 +1958,12 @@ class SStructureInspectorApp:
         btn = tk.Button(dialog, text=self.t("confirm_btn"), command=close_dialog,
                         font=("맑은 고딕", 11, "bold"), bg="#dc3545", fg="#ffffff", relief="flat", padx=20, pady=6)
         btn.pack(pady=10)
-        btn.focus_set()
+        btn.focus_force()
 
     def open_lock_popup(self, title_text, msg, header_bg, header_fg):
+        if self.active_popup:
+            self.close_active_popup()
+        self.clear_scan_buffers()
         self.start_looping_ng_alarm()
 
         dialog = tk.Toplevel(self.root)
@@ -1951,31 +1974,27 @@ class SStructureInspectorApp:
         dialog.grab_set()
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        self.center_popup(dialog, 520, 320)
         self.active_popup = dialog
+        self.center_popup(dialog, 540, 330)
 
         def force_close_lock():
             self.stop_looping_ng_alarm()
-            dialog.grab_release()
-            dialog.destroy()
-            self.active_popup = None
+            self.close_active_popup(dialog)
             if self.inspection_state == self.STATE_WAIT_SCAN:
                 self.set_status("READY", "#adb5bd", "#2a2e37")
             self.scan_entry.focus_set()
 
-        # 우측 상단 히든 잠금 해제 버튼
         btn_hidden_close = tk.Button(
             dialog, text="", command=force_close_lock,
             bg=header_bg, activebackground=header_bg, bd=0, relief="flat", width=4, height=1, cursor="arrow"
         )
         btn_hidden_close.place(relx=1.0, x=-2, y=2, anchor="ne")
 
-        tk.Label(dialog, text=msg, font=("맑은 고딕", 10, "bold"), bg=header_bg, fg=header_fg, justify=tk.LEFT).pack(pady=15, padx=20)
+        tk.Label(dialog, text=msg, font=("맑은 고딕", 10, "bold"), bg=header_bg, fg=header_fg, justify=tk.LEFT).pack(pady=(20, 12), padx=20)
 
         pw_entry = tk.Entry(dialog, show="*", font=("Arial", 16), justify="center", width=14,
                             bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         pw_entry.pack(pady=5)
-        pw_entry.focus_set()
 
         lbl_err = tk.Label(dialog, text="", font=("맑은 고딕", 10, "bold"), fg="#ff6b6b", bg=header_bg)
         lbl_err.pack()
@@ -1987,60 +2006,83 @@ class SStructureInspectorApp:
                 self.play_triple_beep()
                 lbl_err.config(text=self.t("pw_err"))
                 pw_entry.delete(0, tk.END)
+                pw_entry.focus_force()
 
         pw_entry.bind("<Return>", unlock)
         tk.Button(dialog, text=self.t("unlock_btn"), command=unlock,
                   font=("맑은 고딕", 11, "bold"), bg="#dc3545", fg="#ffffff",
                   relief="flat", padx=16, pady=5, cursor="hand2").pack(pady=10)
+        pw_entry.focus_force()
 
     def open_reset_dialog(self):
+        if self.active_popup:
+            return
+        self.clear_scan_buffers()
+
         win = tk.Toplevel(self.root)
         win.title(self.t("reset_btn"))
+        win.resizable(False, False)
         win.configure(bg=BG_PANEL)
         win.transient(self.root)
         win.grab_set()
+        self.active_popup = win
         self.center_popup(win, 360, 210)
 
         tk.Label(win, text="[S-Structure] 카운터를 초기화하려면\n관리자 비밀번호를 입력하세요.",
                  font=("맑은 고딕", 10, "bold"), fg=TEXT_COLOR, bg=BG_PANEL).pack(pady=(15, 8))
 
-        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff")
+        pw_entry = tk.Entry(win, show="*", font=("Arial", 14), justify="center", bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         pw_entry.pack(pady=5)
-        pw_entry.focus_set()
 
         lbl_err = tk.Label(win, text="", font=("맑은 고딕", 9), fg="#ff6b6b", bg=BG_PANEL)
         lbl_err.pack()
+
+        def close_reset():
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
 
         def do_reset(event=None):
             if pw_entry.get() == self.admin_password:
                 self.counts = {"total": 0, "ok": 0, "ng": 0}
                 self.save_counts()
                 self.update_stat_cards()
-                win.destroy()
-                self.scan_entry.focus_set()
+                close_reset()
             else:
                 lbl_err.config(text=self.t("pw_err"))
                 pw_entry.delete(0, tk.END)
+                pw_entry.focus_force()
 
         pw_entry.bind("<Return>", do_reset)
+        win.protocol("WM_DELETE_WINDOW", close_reset)
         tk.Button(win, text=self.t("unlock_btn"), command=do_reset, bg="#dc3545", fg="#ffffff",
-                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=3).pack(pady=10)
+                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=4, cursor="hand2").pack(pady=10)
+        pw_entry.focus_force()
 
     def change_password_dialog(self):
+        if self.active_popup:
+            return
+        self.clear_scan_buffers()
+
         win = tk.Toplevel(self.root)
         win.title(self.t("pw_setting"))
+        win.resizable(False, False)
         win.configure(bg=BG_PANEL)
         win.transient(self.root)
         win.grab_set()
-        self.center_popup(win, 340, 220)
+        self.active_popup = win
+        self.center_popup(win, 340, 230)
 
         tk.Label(win, text="현재 비밀번호", font=("맑은 고딕", 9), fg=TEXT_COLOR, bg=BG_PANEL).pack(pady=(15, 2))
-        curr_entry = tk.Entry(win, show="*", font=("Arial", 11), justify="center", bg=BG_INPUT, fg="#ffffff")
+        curr_entry = tk.Entry(win, show="*", font=("Arial", 11), justify="center", bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         curr_entry.pack()
 
         tk.Label(win, text="새 6자리 숫자 비밀번호", font=("맑은 고딕", 9), fg=TEXT_COLOR, bg=BG_PANEL).pack(pady=(10, 2))
-        new_entry = tk.Entry(win, show="*", font=("Arial", 11), justify="center", bg=BG_INPUT, fg="#ffffff")
+        new_entry = tk.Entry(win, show="*", font=("Arial", 11), justify="center", bg=BG_INPUT, fg="#ffffff", insertbackground="#ffffff")
         new_entry.pack()
+
+        def close_pw():
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
 
         def apply_pw():
             if curr_entry.get() != self.admin_password:
@@ -2052,10 +2094,12 @@ class SStructureInspectorApp:
                 return
             self.admin_password = new_val
             messagebox.showinfo("Success", "비밀번호가 변경되었습니다.", parent=win)
-            win.destroy()
+            close_pw()
 
+        win.protocol("WM_DELETE_WINDOW", close_pw)
         tk.Button(win, text=self.t("unlock_btn"), command=apply_pw, bg="#2b5278", fg="#ffffff",
-                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=4).pack(pady=15)
+                  relief="flat", font=("맑은 고딕", 10, "bold"), padx=15, pady=4, cursor="hand2").pack(pady=15)
+        curr_entry.focus_force()
 
     def on_language_changed(self, event=None):
         self.root.title(self.t("title"))
