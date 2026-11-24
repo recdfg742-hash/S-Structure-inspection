@@ -37,6 +37,12 @@ except ImportError:
     CV_AVAILABLE = False
 
 try:
+    from cv2_enumerate_cameras import enumerate_cameras
+    CAM_ENUM_AVAILABLE = True
+except ImportError:
+    CAM_ENUM_AVAILABLE = False
+
+try:
     import winsound
 except ImportError:
     winsound = None
@@ -69,7 +75,17 @@ MODEL_NAME = "S-Structure"
 TARGET_BARCODE_PREFIX = "MPL03079AB"
 DEFAULT_PASSWORD = "123456"
 CAPTURE_COOLDOWN = 0.6  # F2 연속 오입력 방지 (초)
-EXTERNAL_CAM_INDICES = [1, 2, 3, 4]  # 노트북 내장 웹캠(0번) 완전 제외
+
+# 노트북 내장/가상 카메라 제외 키워드 (소문자 비교)
+INTERNAL_CAM_KEYWORDS = (
+    "720p", "integrated", "built-in", "builtin", "internal",
+    "ir camera", "front camera", "rear camera", "truevision",
+    "facetime", "laptop", "notebook", "virtual", "obs"
+)
+# 외부 USB 웹캠 우선 인식 키워드
+EXTERNAL_CAM_PREFER_KEYWORDS = (
+    "usb", "uvc", "logitech", "brio", "c920", "c922", "c930", "1080", "fhd", "full hd"
+)
 
 def get_base_dir():
     if getattr(sys, 'frozen', False):
@@ -106,6 +122,10 @@ def hide_file(filepath):
 def sanitize_filename(name):
     return re.sub(r'[\/:*?"<>|;]', '_', name).strip()
 
+def is_internal_camera_name(name):
+    low = (name or "").lower()
+    return any(kw in low for kw in INTERNAL_CAM_KEYWORDS)
+
 def enhance_frame_for_capture(
     frame,
     denoise_strength=3.0,
@@ -137,6 +157,7 @@ def enhance_frame_for_capture(
 DEFAULT_APP_CFG = {
     "save_mode": "merged_single",   # "merged_single", "separate", "both"
     "skip_bending_mode": False,     # 휨 검사 생략 mode (True: Step3 생략 / False: 4스텝)
+    "preferred_cam_name": "",       # 사용자가 직접 지정한 외부 웹캠 이름 저장
 }
 
 def load_app_cfg():
@@ -352,6 +373,7 @@ class SStructureInspectorApp:
         self.is_camera_ready = False
         self.cam_thread_running = True
         self.cam_index_used = -1
+        self.cam_name_used = ""
         self.cam_ng_popup_active = False
         self.cam_ng_dialog = None
 
@@ -479,41 +501,192 @@ class SStructureInspectorApp:
         self.alarm_thread_running = False
 
     # ==========================================
-    # 외부 USB 웹캠 전용 연결 (내장 웹캠 0번 완전 제외 + MSMF 우선)
+    # 장치 이름 기반 외부 USB 웹캠 탐색 및 연결 (노트북별 인덱스 차이 완벽 해결)
     # ==========================================
-    def find_and_open_external_camera(self):
+    def list_system_cameras(self):
         """
-        노트북 내장 웹캠(인덱스 0)을 제외하고 외부 USB 웹캠(1, 2, 3, 4)만 탐색합니다.
-        Windows 설정과 동일한 CAP_MSMF 백엔드를 우선 사용하여 보라색 노이즈를 방지합니다.
+        Windows MSMF/DSHOW에서 연결된 모든 카메라의 (실제 인덱스, 장치명, 백엔드) 목록을 반환합니다.
         """
-        for idx in EXTERNAL_CAM_INDICES:
-            for api_backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW]:
-                cap = None
+        devices = []
+        if CAM_ENUM_AVAILABLE:
+            for backend in (cv2.CAP_MSMF, cv2.CAP_DSHOW):
                 try:
-                    cap = cv2.VideoCapture(idx, api_backend)
-                    if cap.isOpened():
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-                        # 초기 프레임 안정화 워밍업 (3프레임 버림)
-                        valid_frame = None
-                        for _ in range(4):
-                            ret, frame = cap.read()
-                            if ret and frame is not None and frame.size > 0:
-                                valid_frame = frame
-                        if valid_frame is not None:
-                            self.cam_index_used = idx
-                            return cap
-                    if cap is not None:
-                        cap.release()
+                    found = list(enumerate_cameras(backend))
                 except Exception:
-                    if cap is not None:
-                        try:
-                            cap.release()
-                        except Exception:
-                            pass
+                    found = []
+                if found:
+                    for cam in found:
+                        raw_idx = cam.index - backend if cam.index >= backend else cam.index
+                        devices.append({
+                            "index": int(raw_idx),
+                            "name": (cam.name or f"Camera {raw_idx}").strip(),
+                            "backend": backend,
+                            "is_internal": is_internal_camera_name(cam.name),
+                        })
+                    break
+        return devices
+
+    def _open_camera_device(self, idx, backend):
+        cap = None
+        try:
+            cap = cv2.VideoCapture(idx, backend)
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                valid_frame = None
+                for _ in range(4):
+                    ret, frame = cap.read()
+                    if ret and frame is not None and frame.size > 0:
+                        valid_frame = frame
+                if valid_frame is not None:
+                    return cap
+            if cap is not None:
+                cap.release()
+        except Exception:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
         return None
+
+    def find_and_open_external_camera(self, target_name=None):
+        """
+        1) 장치 이름 기반으로 내장 웹캠(720p HD Camera, Integrated 등)을 제외하고 외부 USB 웹캠만 연결합니다.
+        2) 노트북마다 USB 웹캠이 0번이든 1번이든 이름 기준으로 정확히 찾아냅니다.
+        3) 외부 USB 웹캠이 없고 내장 웹캠만 남아 있으면 None을 반환하여 CAM CONTACT NG를 띄웁니다.
+        """
+        devices = self.list_system_cameras()
+        preferred_name = (target_name or self.app_cfg.get("preferred_cam_name", "")).strip()
+
+        if devices:
+            # 사용자가 수동 지정한 특정 카메라가 요청된 경우 최우선 시도
+            if target_name:
+                for d in devices:
+                    if d["name"] == target_name:
+                        cap = self._open_camera_device(d["index"], d["backend"])
+                        if cap is not None:
+                            self.cam_index_used = d["index"]
+                            self.cam_name_used = d["name"]
+                            return cap
+                return None
+
+            # 내장 웹캠(720p HD Camera, Integrated 등) 제외
+            external_candidates = [d for d in devices if not d["is_internal"]]
+            if not external_candidates:
+                return None
+
+            # 우선순위 정렬: 1) 저장된 선호 카메라명, 2) USB/UVC 등 외부 웹캠 키워드 포함
+            def _priority(d):
+                name_low = d["name"].lower()
+                is_pref = 0 if (preferred_name and d["name"] == preferred_name) else 1
+                has_ext_kw = 0 if any(kw in name_low for kw in EXTERNAL_CAM_PREFER_KEYWORDS) else 1
+                return (is_pref, has_ext_kw, d["index"])
+
+            external_candidates.sort(key=_priority)
+
+            for d in external_candidates:
+                for backend in (d["backend"], cv2.CAP_MSMF, cv2.CAP_DSHOW):
+                    cap = self._open_camera_device(d["index"], backend)
+                    if cap is not None:
+                        self.cam_index_used = d["index"]
+                        self.cam_name_used = d["name"]
+                        return cap
+            return None
+
+        # [폴백] cv2-enumerate-cameras 미설치 환경일 때만 인덱스 기반 탐색
+        for idx in (0, 1, 2, 3):
+            for backend in (cv2.CAP_MSMF, cv2.CAP_DSHOW):
+                cap = self._open_camera_device(idx, backend)
+                if cap is not None:
+                    self.cam_index_used = idx
+                    self.cam_name_used = f"USB CAM {idx}"
+                    return cap
+        return None
+
+    def open_camera_select_dialog(self):
+        """실시간 웹캠 상단 [🔄 캠 전환] 버튼: 현재 연결된 카메라 목록에서 직접 선택 및 저장"""
+        if self.active_popup:
+            return
+        self.clear_scan_buffers()
+
+        devices = self.list_system_cameras()
+        win = tk.Toplevel(self.root)
+        win.title("외부 USB 웹캠 선택")
+        win.resizable(False, False)
+        win.configure(bg=BG_PANEL)
+        win.transient(self.root)
+        win.grab_set()
+        self.active_popup = win
+        self.center_popup(win, 460, 300)
+
+        tk.Label(
+            win, text="[ 📷 연결된 카메라 장치 선택 ]",
+            font=("맑은 고딕", 11, "bold"), fg=ACCENT_BLUE, bg=BG_PANEL
+        ).pack(pady=(15, 6))
+
+        tk.Label(
+            win, text="외부 USB 웹캠을 선택하면 다음 실행 시에도 이 카메라로 자동 연결됩니다.",
+            font=("맑은 고딕", 8), fg=TEXT_MUTED, bg=BG_PANEL
+        ).pack(pady=(0, 8))
+
+        listbox = tk.Listbox(
+            win, bg=BG_INPUT, fg="#ffffff", selectbackground="#2563eb",
+            font=("맑은 고딕", 10), height=6, relief="flat"
+        )
+        listbox.pack(fill=tk.X, padx=25, pady=4)
+
+        if devices:
+            for d in devices:
+                tag = " [내장 제외대상]" if d["is_internal"] else " [외부 USB 권장]"
+                cur = " (현재 연결)" if d["name"] == self.cam_name_used else ""
+                listbox.insert(tk.END, f"[{d['index']}] {d['name']}{tag}{cur}")
+        else:
+            listbox.insert(tk.END, "감지된 카메라 목록이 없습니다.")
+
+        def close_sel():
+            self.close_active_popup(win)
+            self.scan_entry.focus_set()
+
+        def apply_selected_cam():
+            sel = listbox.curselection()
+            if not sel or not devices:
+                return
+            chosen = devices[sel[0]]
+            chosen_name = chosen["name"]
+
+            with self.cam_lock:
+                if self.cap is not None:
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
+                new_cap = self.find_and_open_external_camera(target_name=chosen_name)
+                if new_cap is not None:
+                    self.cap = new_cap
+                    self.is_camera_ready = True
+                    self.app_cfg["preferred_cam_name"] = chosen_name
+                    save_app_cfg(self.app_cfg)
+                    self.lbl_cam_status.config(
+                        text=f"● LIVE ({self.cam_name_used})", fg="#22c55e"
+                    )
+                    close_sel()
+                    messagebox.showinfo("연결 완료", f"[{chosen_name}] 카메라로 전환 및 저장되었습니다.", parent=self.root)
+                else:
+                    messagebox.showerror("연결 실패", f"[{chosen_name}] 카메라를 열 수 없습니다.", parent=win)
+
+        btn_frame = tk.Frame(win, bg=BG_PANEL)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text="선택 카메라로 연결", command=apply_selected_cam,
+                  bg="#0284c7", fg="#ffffff", font=("맑은 고딕", 10, "bold"),
+                  relief="flat", padx=16, pady=5, cursor="hand2").pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="닫기", command=close_sel,
+                  bg="#475569", fg="#ffffff", font=("맑은 고딕", 10),
+                  relief="flat", padx=14, pady=5, cursor="hand2").pack(side=tk.LEFT, padx=5)
+        win.protocol("WM_DELETE_WINDOW", close_sel)
 
     def start_usb_webcam_stream(self):
         def _webcam_worker():
@@ -524,8 +697,9 @@ class SStructureInspectorApp:
                 self.cap = self.find_and_open_external_camera()
                 if self.cap and self.cap.isOpened():
                     self.is_camera_ready = True
-                    self.root.after(0, lambda: self.lbl_cam_status.config(
-                        text=f"● LIVE (외부 USB CAM {self.cam_index_used})", fg="#22c55e"
+                    label_text = f"● LIVE ({self.cam_name_used})"
+                    self.root.after(0, lambda t=label_text: self.lbl_cam_status.config(
+                        text=t, fg="#22c55e"
                     ))
                 else:
                     self.is_camera_ready = False
@@ -539,7 +713,6 @@ class SStructureInspectorApp:
                     time.sleep(0.5)
                     continue
 
-                # CAM CONTACT NG 팝업이 열려 있으면 사용자의 [USB 웹캠 연결] 버튼 클릭 대기
                 if self.cam_ng_popup_active:
                     time.sleep(0.2)
                     continue
@@ -730,7 +903,7 @@ class SStructureInspectorApp:
                     if ok_connected:
                         self.stop_looping_ng_alarm()
                         self.lbl_cam_status.config(
-                            text=f"● LIVE (외부 USB CAM {self.cam_index_used})", fg="#22c55e"
+                            text=f"● LIVE ({self.cam_name_used})", fg="#22c55e"
                         )
                         self.close_cam_ng_popup()
                         if self.inspection_state == self.STATE_WAIT_SCAN:
@@ -836,9 +1009,6 @@ class SStructureInspectorApp:
                 self.save_queue.task_done()
 
     def save_inspection_photos(self, barcode_str, shots_info):
-        """
-        shots_info: [(frame, time_str, "Step1", (0,255,0)), ...] (2장 또는 3장)
-        """
         if not CV_AVAILABLE or not shots_info:
             return "-"
 
@@ -871,7 +1041,6 @@ class SStructureInspectorApp:
 
         save_mode = self.app_cfg.get("save_mode", "merged_single")
 
-        # 프레임 복사본을 비동기 큐에 전달 (현장 끊김 없음)
         copied_shots = [(f.copy(), ts, ttl, col) for (f, ts, ttl, col) in shots_info]
         self.save_queue.put((
             copied_shots, barcode_str, today_str,
@@ -955,7 +1124,6 @@ class SStructureInspectorApp:
         tk.Label(header_frame, text=f"ITEM: {MODEL_NAME} ({TARGET_BARCODE_PREFIX})",
                  font=("맑은 고딕", 10, "bold"), fg=ACCENT_YELLOW, bg="#282e3a", padx=10, pady=3).pack(side=tk.LEFT)
 
-        # 휨 검사 생략 mode 상태 배지
         self.lbl_skip_badge = tk.Label(
             header_frame, text="", font=("맑은 고딕", 9, "bold"), padx=10, pady=3
         )
@@ -1018,7 +1186,6 @@ class SStructureInspectorApp:
         )
         self.lbl_model_info.pack(fill=tk.X)
 
-        # 4단계 워크플로우 배지
         step_frame = tk.Frame(left_panel, bg="#181c24", pady=4, padx=4)
         step_frame.pack(fill=tk.X, padx=18, pady=(2, 4))
         step_frame.columnconfigure((0, 1, 2, 3), weight=1)
@@ -1117,20 +1284,26 @@ class SStructureInspectorApp:
         )
         self.btn_manager.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
 
-        # 실시간 외부 USB 웹캠 뷰어
+        # 실시간 외부 USB 웹캠 뷰어 + 수동 캠 전환 버튼
         cam_panel = tk.Frame(left_panel, bg=BG_PANEL)
         cam_panel.pack(fill=tk.X, padx=18, pady=(2, 4))
 
         top_info = tk.Frame(cam_panel, bg=BG_PANEL)
         top_info.pack(fill=tk.X)
-        tk.Label(top_info, text="📹 실시간 외부 USB 웹캠 (LIVE)", font=("맑은 고딕", 8, "bold"), fg="#38bdf8", bg=BG_PANEL).pack(side=tk.LEFT)
+        tk.Label(top_info, text="📹 실시간 외부 USB 웹캠", font=("맑은 고딕", 8, "bold"), fg="#38bdf8", bg=BG_PANEL).pack(side=tk.LEFT)
+
+        tk.Button(
+            top_info, text="🔄 캠 전환", command=self.open_camera_select_dialog,
+            bg="#334155", fg="#e2e8f0", activebackground="#475569", activeforeground="#ffffff",
+            relief="flat", font=("맑은 고딕", 7, "bold"), padx=6, pady=1, cursor="hand2"
+        ).pack(side=tk.RIGHT, padx=(6, 0))
+
         self.lbl_cam_status = tk.Label(top_info, text="○ 외부 USB 연결 확인 중...", font=("맑은 고딕", 8, "bold"), fg="#f87171", bg=BG_PANEL)
         self.lbl_cam_status.pack(side=tk.RIGHT)
 
         self.cam_canvas = tk.Canvas(cam_panel, width=440, height=165, bg="#0f172a", highlightthickness=1, highlightbackground="#334155")
         self.cam_canvas.pack(fill=tk.X, pady=(2, 0))
 
-        # 좌측 하단 Step1 / Step2 / Step3 촬영 사진 3개 슬롯
         captured_panel = tk.Frame(left_panel, bg=BG_PANEL)
         captured_panel.pack(fill=tk.BOTH, expand=True, padx=18, pady=(4, 8))
 
@@ -1168,7 +1341,6 @@ class SStructureInspectorApp:
 
         self.reset_thumbnail_slots()
 
-        # 우측 패널: 실시간 검사 기록 테이블
         right_panel = tk.Frame(main_frame, bg=BG_MAIN)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -1372,7 +1544,6 @@ class SStructureInspectorApp:
             if self.active_popup or self.cam_ng_popup_active:
                 return
 
-            # 오직 노트북 [F2] 키만 사진 촬영 트리거로 작동
             if event.keysym == "F2":
                 self.trigger_f2_capture()
                 return "break"
@@ -1497,7 +1668,6 @@ class SStructureInspectorApp:
                 )
                 return
 
-        # 1단계 바코드 스캔 완료 -> 사진 촬영 없이 Step 1 대기 상태로 전환
         self.active_barcode = raw_code
         self.shot1_frame = None
         self.shot2_frame = None
@@ -1539,7 +1709,6 @@ class SStructureInspectorApp:
         time_str = now_dt.strftime("%H:%M:%S")
         day_str = now_dt.strftime("%Y-%m-%d")
 
-        # [2번] Step 1 사진 촬영
         if self.inspection_state == self.STATE_WAIT_SHOT1:
             self.shot1_frame = captured
             self.shot1_time_str = time_str
@@ -1550,13 +1719,11 @@ class SStructureInspectorApp:
             self.set_status("Step 2 촬영 (F2)", "#fde047", "#422006")
             self.play_ok_beep(1100, 120)
 
-        # [3번] Step 2 사진 촬영
         elif self.inspection_state == self.STATE_WAIT_SHOT2:
             self.shot2_frame = captured
             self.shot2_time_str = time_str
             self.render_captured_thumbnail(self.canvas_shot2, self.shot2_frame, 2, time_str)
 
-            # 휨 검사 생략 mode ON -> Step 3 생략하고 즉시 검사 완료!
             if self.skip_bending_mode:
                 self.shot3_frame = None
                 self.shot3_time_str = "생략"
@@ -1568,7 +1735,6 @@ class SStructureInspectorApp:
                 self.set_status("Step 3 휨 촬영(F2)", "#c4b5fd", "#2e1065")
                 self.play_ok_beep(1250, 120)
 
-        # [4번] Step 3 사진 촬영 (휨 검사)
         elif self.inspection_state == self.STATE_WAIT_SHOT3:
             self.shot3_frame = captured
             self.shot3_time_str = time_str
@@ -1632,7 +1798,7 @@ class SStructureInspectorApp:
         self.scan_entry.focus_set()
 
     # ==========================================
-    # 단일 엑셀 파일 관리 (10열 스키마 + 기존 9열 파일 자동 마이그레이션)
+    # 단일 엑셀 파일 관리
     # ==========================================
     def open_or_init_single_workbook(self):
         unhide_file(SINGLE_EXCEL_PATH)
@@ -1640,7 +1806,6 @@ class SStructureInspectorApp:
             try:
                 wb = openpyxl.load_workbook(SINGLE_EXCEL_PATH)
                 ws = wb["스캔실적"] if "스캔실적" in wb.sheetnames else wb.active
-                # 기존 9열 파일 호환성 자동 보정 (7열에 Step3 촬영일시 열 삽입)
                 if ws.cell(row=1, column=7).value == "판정":
                     ws.insert_cols(7)
                     c = ws.cell(row=1, column=7, value="Step3 촬영일시(휨)")
@@ -1958,7 +2123,7 @@ class SStructureInspectorApp:
             pass
 
     # ==========================================
-    # 관리자 모드 (휨 검사 생략 mode 버튼 포함) / 행 삭제 / 잠금 팝업
+    # 관리자 모드 / 행 삭제 / 잠금 팝업
     # ==========================================
     def toggle_manager_mode(self):
         if self.active_popup:
@@ -2041,7 +2206,6 @@ class SStructureInspectorApp:
         tk.Button(dialog, text="🛠 RE-WORK 모드 활성화 (반송품 재검사)", command=act_activate_rework,
                   bg="#78350f", fg="#fde68a", font=("맑은 고딕", 10, "bold"), relief="flat", pady=7, cursor="hand2").pack(fill=tk.X, padx=30, pady=5)
 
-        # [신규] 휨 검사 생략 mode 토글 버튼 (ON -> Step3 생략 / OFF -> 4스텝 복귀)
         def get_skip_btn_style():
             if self.skip_bending_mode:
                 return "⚡ 휨 검사 생략 mode [현재: ON - Step 3 생략 중] (클릭 시 OFF)", "#b45309", "#ffffff"
